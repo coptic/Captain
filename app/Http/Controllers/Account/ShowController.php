@@ -33,6 +33,7 @@ use FireflyIII\Models\Transaction;
 use FireflyIII\Repositories\Account\AccountRepositoryInterface;
 use FireflyIII\Support\Facades\Steam;
 use FireflyIII\Support\Http\Controllers\PeriodOverview;
+use FireflyIII\Support\Http\Controllers\AugumentData;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -40,6 +41,10 @@ use Illuminate\Routing\Redirector;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
+use JsonException;
+use Log;
+use Psr\Container\ContainerExceptionInterface;
+use Psr\Container\NotFoundExceptionInterface;
 
 /**
  * Class ShowController
@@ -47,7 +52,7 @@ use Illuminate\View\View;
 class ShowController extends Controller
 {
     use PeriodOverview;
-
+    use AugumentData;
     private AccountRepositoryInterface $repository;
 
     /**
@@ -123,13 +128,13 @@ class ShowController extends Controller
 
         /** @var GroupCollectorInterface $collector */
         $collector        = app(GroupCollectorInterface::class);
-        $collector->setAccounts(new Collection([$account]))->setLimit($pageSize)->setPage($page)->withAccountInformation()->withCategoryInformation()->setRange($start, $end);
-
-        // this search will not include transaction groups where this asset account (or liability)
-        // is just part of ONE of the journals. To force this:
-        $collector->setExpandGroupSearch(true);
-
-        $groups           = $collector->getPaginatedGroups();
+        $collector
+            ->setAccounts(new Collection([$account]))
+            ->setLimit($pageSize)
+            ->setPage($page)->withAccountInformation()->withCategoryInformation()
+            ->setRange($start, $end);
+        $categorySummaryData = $this->getCategorySummaryData($collector);
+        $groups = $collector->getPaginatedGroups();
 
         $groups->setPath(route('accounts.show', [$account->id, $start->format('Y-m-d'), $end->format('Y-m-d')]));
         $showAll          = false;
@@ -159,7 +164,8 @@ class ShowController extends Controller
                 'end',
                 'chartUrl',
                 'location',
-                'balances'
+                'balances',
+                'categorySummaryData'
             )
         );
     }
@@ -173,6 +179,7 @@ class ShowController extends Controller
      *                                              */
     public function showAll(Request $request, Account $account)
     {
+        Log::debug('Now in API ShowController::showAll()');
         if (!$this->isEditableAccount($account)) {
             return $this->redirectAccountToAccount($account);
         }
@@ -196,11 +203,8 @@ class ShowController extends Controller
         /** @var GroupCollectorInterface $collector */
         $collector       = app(GroupCollectorInterface::class);
         $collector->setAccounts(new Collection([$account]))->setLimit($pageSize)->setPage($page)->withAccountInformation()->withCategoryInformation();
-
-        // this search will not include transaction groups where this asset account (or liability)
-        // is just part of ONE of the journals. To force this:
-        $collector->setExpandGroupSearch(true);
-
+        $categorySummaryData = $this->getCategorySummaryData($collector);
+        // print_r ($categorySummaryData);
         $groups          = $collector->getPaginatedGroups();
         $groups->setPath(route('accounts.show.all', [$account->id]));
         $chartUrl        = route('chart.account.period', [$account->id, $start->format('Y-m-d'), $end->format('Y-m-d')]);
@@ -227,8 +231,67 @@ class ShowController extends Controller
                 'subTitle',
                 'start',
                 'end',
-                'balances'
+                'balances',
+                'categorySummaryData'
             )
         );
+    }
+    public function getCategorySummaryData(GroupCollectorInterface $collector){
+        Log::debug('Now in API ShowController::getCategorySummaryData()');
+        $journals  = $collector->getExtractedJournals();
+        $result    = [];
+        $chartData = [];
+
+        /** @var array $journal */
+        foreach ($journals as $journal) {
+            $key = sprintf('%d-%d', $journal['category_id'], $journal['currency_id']);
+            if (!array_key_exists($key, $result)) {
+                $result[$key] = [
+                    'total'           => '0',
+                    'category_id'     => (int)$journal['category_id'],
+                    'currency_name'   => $journal['currency_name'],
+                    'currency_symbol' => $journal['currency_symbol'],
+                    'currency_code'   => $journal['currency_code'],
+                ];
+            }
+            $result[$key]['total'] = bcadd($journal['amount'], $result[$key]['total']);
+        }
+        $names = $this->getCategoryNames(array_keys($result));
+        foreach ($result as $row) {
+            $categoryId        = $row['category_id'];
+            $name              = $names[$categoryId] ?? '(unknown)';
+            // $label             = (string)trans('firefly.name_in_currency', ['name' => $name, 'currency' => $row['currency_name']]);
+            $chartData[$name] = ['amount' => $row['total']];
+        }
+        return $chartData;
+    }
+    public function getCategorySummaryData(GroupCollectorInterface $collector){
+        Log::debug('Now in API ShowController::getCategorySummaryData()');
+        $journals  = $collector->getExtractedJournals();
+        $result    = [];
+        $chartData = [];
+
+        /** @var array $journal */
+        foreach ($journals as $journal) {
+            $key = sprintf('%d-%d', $journal['category_id'], $journal['currency_id']);
+            if (!array_key_exists($key, $result)) {
+                $result[$key] = [
+                    'total'           => '0',
+                    'category_id'     => (int)$journal['category_id'],
+                    'currency_name'   => $journal['currency_name'],
+                    'currency_symbol' => $journal['currency_symbol'],
+                    'currency_code'   => $journal['currency_code'],
+                ];
+            }
+            $result[$key]['total'] = bcadd($journal['amount'], $result[$key]['total']);
+        }
+        $names = $this->getCategoryNames(array_keys($result));
+        foreach ($result as $row) {
+            $categoryId        = $row['category_id'];
+            $name              = $names[$categoryId] ?? '(unknown)';
+            // $label             = (string)trans('firefly.name_in_currency', ['name' => $name, 'currency' => $row['currency_name']]);
+            $chartData[$name] = ['amount' => $row['total']];
+        }
+        return $chartData;
     }
 }
