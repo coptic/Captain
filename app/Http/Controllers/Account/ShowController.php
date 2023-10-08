@@ -196,9 +196,10 @@ class ShowController extends Controller
         $periods      = new Collection();
         /** @var GroupCollectorInterface $collector */
         $collector = app(GroupCollectorInterface::class);
-        $collector->setAccounts(new Collection([$account]))->setLimit($pageSize)->setPage($page)->withAccountInformation()->withCategoryInformation();
+        $collector->setAccounts(new Collection([$account]))->withCategoryInformation();
         $categorySummaryData = $this->getCategorySummaryData($collector);
         // print_r ($categorySummaryData);
+        $collector->setAccounts(new Collection([$account]))->setLimit($pageSize)->setPage($page)->withAccountInformation()->withCategoryInformation();
         $groups = $collector->getPaginatedGroups();
         $groups->setPath(route('accounts.show.all', [$account->id]));
         $chartUrl = route('chart.account.period', [$account->id, $start->format('Y-m-d'), $end->format('Y-m-d')]);
